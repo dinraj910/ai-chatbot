@@ -69,19 +69,19 @@ export default function ChatLayout() {
   };
 
   return (
-    <div className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden font-sans">
+    <div className="flex h-screen bg-[#212121] text-zinc-100 overflow-hidden font-sans">
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 
-          className="fixed inset-0 bg-slate-950/80 z-40 lg:hidden backdrop-blur-sm"
+          className="fixed inset-0 bg-[#212121]/80 z-40 lg:hidden backdrop-blur-sm"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
       {/* Sidebar - Desktop and Mobile */}
       <div 
-        className={`fixed inset-y-0 left-0 z-50 transform lg:relative lg:translate-x-0 transition-transform duration-300 ease-in-out flex ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        className={`fixed inset-y-0 left-0 z-50 transform lg:relative lg:tranzinc-x-0 transition-transform duration-300 ease-in-out flex ${
+          sidebarOpen ? "tranzinc-x-0" : "-tranzinc-x-full"
         }`}
       >
         <Sidebar 
@@ -107,11 +107,11 @@ export default function ChatLayout() {
         <div className="flex-1 overflow-y-auto scroll-smooth">
           {activeChat.messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-4 fade-in">
-              <div className="w-16 h-16 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 mb-6 shadow-xl shadow-blue-500/10 ring-1 ring-blue-500/20">
+              <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center text-zinc-900 mb-6 ring-1 ring-zinc-200">
                 <Bot className="w-8 h-8" />
               </div>
-              <h2 className="text-2xl font-semibold text-slate-100 mb-3 tracking-tight">How can I help you today?</h2>
-              <p className="text-slate-400 max-w-sm mb-8 leading-relaxed">
+              <h2 className="text-2xl font-semibold text-zinc-100 mb-3 tracking-tight">How can I help you today?</h2>
+              <p className="text-zinc-400 max-w-sm mb-8 leading-relaxed">
                 I am a powerful AI assistant ready to help with coding, writing, and problem-solving.
               </p>
               
@@ -120,10 +120,10 @@ export default function ChatLayout() {
                   <button 
                     key={i}
                     onClick={() => handleSendMessage(prompt)}
-                    className="flex justify-between items-center text-left px-5 py-4 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-slate-500 rounded-xl text-sm text-slate-300 transition-all duration-200 group shadow-sm hover:shadow-md"
+                    className="flex justify-between items-center text-left px-5 py-4 bg-zinc-800/50 hover:bg-[#2f2f2f] border border-[#2f2f2f]/50 hover:border-zinc-500 rounded-xl text-sm text-zinc-300 transition-all duration-200 group shadow-sm hover:shadow-md"
                   >
                     <span>{prompt}</span> 
-                    <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400" />
+                    <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity text-zinc-400" />
                   </button>
                 ))}
               </div>
@@ -137,15 +137,15 @@ export default function ChatLayout() {
               ))}
               
               {isLoading && (
-                <div className="py-6 px-4 animate-in fade-in duration-300 bg-slate-800/20 w-full flex">
+                <div className="py-6 px-4 animate-in fade-in duration-300 bg-zinc-800/20 w-full flex">
                   <div className="max-w-3xl mx-auto flex w-full gap-4 sm:gap-6 flex-row">
-                    <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg shadow-sm border bg-gradient-to-br from-blue-600 to-blue-500 text-white border-blue-700">
+                    <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg shadow-sm border bg-[#10a37f] text-white border-transparent shadow-sm">
                       <Bot className="w-5 h-5" />
                     </div>
-                    <div className="flex-1 text-slate-200 items-center flex gap-1 h-8">
-                      <div className="w-2 h-2 rounded-full bg-slate-500 animate-bounce [animation-delay:-0.3s]"></div>
-                      <div className="w-2 h-2 rounded-full bg-slate-500 animate-bounce [animation-delay:-0.15s]"></div>
-                      <div className="w-2 h-2 rounded-full bg-slate-500 animate-bounce"></div>
+                    <div className="flex-1 text-zinc-200 items-center flex gap-1 h-8">
+                      <div className="w-2 h-2 rounded-full bg-zinc-500 animate-bounce [animation-delay:-0.3s]"></div>
+                      <div className="w-2 h-2 rounded-full bg-zinc-500 animate-bounce [animation-delay:-0.15s]"></div>
+                      <div className="w-2 h-2 rounded-full bg-zinc-500 animate-bounce"></div>
                     </div>
                   </div>
                 </div>
