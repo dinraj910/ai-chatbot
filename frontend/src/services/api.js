@@ -8,6 +8,10 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+// Debug: Log the API base URL
+console.log('[API] Base URL configured:', API_BASE_URL);
+console.log('[API] Environment variables:', import.meta.env);
+
 // Create axios instance with default config
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -20,7 +24,9 @@ const apiClient = axios.create({
 // Request interceptor for logging
 apiClient.interceptors.request.use(
   (config) => {
-    console.log(`[API Request] ${config.method?.toUpperCase()} ${config.url}`);
+    const fullUrl = `${config.baseURL}${config.url}`;
+    console.log(`[API Request] ${config.method?.toUpperCase()} ${fullUrl}`);
+    console.log('[API Request Body]', config.data);
     return config;
   },
   (error) => {
