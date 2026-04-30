@@ -11,9 +11,15 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Load environment variables from .env file
+import pathlib
+env_path = pathlib.Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # Setup logging
 logging.basicConfig(
@@ -21,6 +27,10 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+logger.info(f"Loading environment from: {env_path}")
+logger.info(f"OPENROUTER_API_KEY present: {bool(os.getenv('OPENROUTER_API_KEY'))}")
+logger.info(f"GEMINI_API_KEY present: {bool(os.getenv('GEMINI_API_KEY'))}")
 
 # ============================================================================
 # Configuration - API Keys & Providers
@@ -52,7 +62,7 @@ class OpenRouterProvider(LLMProvider):
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.url = OPENROUTER_URL
-        self.model = "meta-llama/llama-2-7b-chat:free"  # Free model
+        self.model = "mistralai/mistral-7b-instruct"  # Free model
         
     async def generate_response(self, message: str) -> Optional[str]:
         """Call OpenRouter API"""
@@ -153,9 +163,11 @@ class FallbackProvider(LLMProvider):
         
         # Add available providers in order of preference
         if OPENROUTER_API_KEY:
+            logger.info("[FallbackProvider] Adding OpenRouter provider")
             self.providers.append(("OpenRouter", OpenRouterProvider(OPENROUTER_API_KEY)))
         
         if GEMINI_API_KEY:
+            logger.info("[FallbackProvider] Adding Gemini provider")
             self.providers.append(("Gemini", GeminiProvider(GEMINI_API_KEY)))
         
         if not self.providers:
@@ -232,7 +244,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AI Chat Service",
     description="Production-ready AI chat service using free APIs with fallback support",
-    version="3.0.0"
+    version="3.0.0",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
