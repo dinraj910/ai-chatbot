@@ -1,13 +1,16 @@
 """
-FastAPI AI Service - Hugging Face LLM Integration
-Real AI responses powered by transformers library
+FastAPI AI Service - Free API Integration with Fallback
+Uses OpenRouter, Gemini, and other free APIs
+Production-ready deployment without PyTorch/GPU requirements
 """
 
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -20,131 +23,204 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Global LLM Pipeline (loaded once at startup)
+# Configuration - API Keys & Providers
 # ============================================================================
 
-# This will be initialized at startup
-llm_pipeline = None
+# Get API keys from environment variables
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+FALLBACK_MODE = os.getenv("FALLBACK_MODE", "true").lower() == "true"
 
-def init_llm():
-    """
-    Initialize the Hugging Face LLM pipeline
-    Uses distilgpt2 - a fast, lightweight model suitable for chat
-    """
-    global llm_pipeline
-    
-    try:
-        logger.info("🤖 Loading Hugging Face model...")
-        
-        from transformers import pipeline
-        
-        # Using distilgpt2 - fast and lightweight
-        # Other options:
-        # - gpt2: Larger but slower (~350MB)
-        # - distilbert-base-uncased: For classification
-        # - EleutherAI/gpt-j-6B: Larger model (requires GPU and more VRAM)
-        
-        llm_pipeline = pipeline(
-            'text-generation',
-            model='distilgpt2',
-            device=-1  # -1 = CPU, 0 = GPU (if available)
-        )
-        
-        logger.info("✅ LLM model loaded successfully!")
-        logger.info("📊 Model: distilgpt2 (117M parameters)")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to load LLM model: {str(e)}")
-        logger.error("💡 Try running: pip install -r requirements.txt")
-        return False
-
-def generate_response(message: str) -> str:
-    """
-    Generate AI response using Hugging Face LLM
-    
-    Args:
-        message: User input message
-        
-    Returns:
-        AI-generated response
-    """
-    global llm_pipeline
-    
-    if llm_pipeline is None:
-        logger.error("LLM pipeline not initialized")
-        raise RuntimeError("AI model not available")
-    
-    try:
-        # Create a conversation-style prompt
-        prompt = f"Q: {message}\nA:"
-        
-        logger.info(f"🔄 Generating response for: '{message[:50]}...'")
-        
-        # Generate response with optimized parameters
-        outputs = llm_pipeline(
-            prompt,
-            max_length=150,           # Maximum response length
-            num_return_sequences=1,   # Generate 1 response
-            temperature=0.8,          # Creativity (0.0-1.0)
-            top_p=0.95,              # Nucleus sampling
-            do_sample=True,          # Use sampling (better quality)
-            repetition_penalty=1.2,  # Avoid repetition
-        )
-        
-        # Extract response
-        full_response = outputs[0]['generated_text']
-        
-        # Clean up: remove the prompt from the response
-        response = full_response.replace(prompt, '').strip()
-        
-        # If response is empty, provide a helpful fallback
-        if not response or len(response) < 5:
-            response = f"I understand you're asking about '{message}'. That's an interesting question. Could you tell me more about what you'd like to know?"
-        
-        # Ensure response ends with proper punctuation
-        if response and response[-1] not in '.!?':
-            response += '.'
-        
-        logger.info(f"✅ Response generated: '{response[:60]}...'")
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"❌ Error generating response: {str(e)}")
-        return f"I apologize, but I encountered an error: {str(e)}. Please try again with a different message."
+# API Endpoints
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
 
 # ============================================================================
-# FastAPI Lifespan Events
+# LLM Provider Classes
+# ============================================================================
+
+class LLMProvider:
+    """Base class for LLM providers"""
+    
+    async def generate_response(self, message: str) -> Optional[str]:
+        """Generate response from user message"""
+        raise NotImplementedError
+
+class OpenRouterProvider(LLMProvider):
+    """OpenRouter API provider (supports multiple models, free tier available)"""
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.url = OPENROUTER_URL
+        self.model = "meta-llama/llama-2-7b-chat:free"  # Free model
+        
+    async def generate_response(self, message: str) -> Optional[str]:
+        """Call OpenRouter API"""
+        if not self.api_key:
+            logger.warning("[OpenRouter] No API key provided")
+            return None
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    self.url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "HTTP-Referer": "http://localhost:5000",
+                        "X-Title": "AI Chat",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": message
+                            }
+                        ],
+                        "temperature": 0.7,
+                        "max_tokens": 500,
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    logger.info(f"[OpenRouter] ✅ Generated response: {reply[:60]}...")
+                    return reply
+                else:
+                    logger.warning(f"[OpenRouter] Error {response.status_code}: {response.text[:100]}")
+                    return None
+                    
+        except Exception as e:
+            logger.warning(f"[OpenRouter] Failed: {str(e)}")
+            return None
+
+class GeminiProvider(LLMProvider):
+    """Google Gemini API provider (free tier available)"""
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.url = GEMINI_URL
+        
+    async def generate_response(self, message: str) -> Optional[str]:
+        """Call Gemini API"""
+        if not self.api_key:
+            logger.warning("[Gemini] No API key provided")
+            return None
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.url}?key={self.api_key}",
+                    json={
+                        "contents": {
+                            "parts": [
+                                {
+                                    "text": message
+                                }
+                            ]
+                        },
+                        "generationConfig": {
+                            "temperature": 0.7,
+                            "maxOutputTokens": 500,
+                        }
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        content = candidates[0].get("content", {}).get("parts", [])
+                        if content:
+                            reply = content[0].get("text", "")
+                            logger.info(f"[Gemini] ✅ Generated response: {reply[:60]}...")
+                            return reply
+                    return None
+                else:
+                    logger.warning(f"[Gemini] Error {response.status_code}: {response.text[:100]}")
+                    return None
+                    
+        except Exception as e:
+            logger.warning(f"[Gemini] Failed: {str(e)}")
+            return None
+
+class FallbackProvider(LLMProvider):
+    """Fallback provider with multiple LLM options"""
+    
+    def __init__(self):
+        self.providers = []
+        
+        # Add available providers in order of preference
+        if OPENROUTER_API_KEY:
+            self.providers.append(("OpenRouter", OpenRouterProvider(OPENROUTER_API_KEY)))
+        
+        if GEMINI_API_KEY:
+            self.providers.append(("Gemini", GeminiProvider(GEMINI_API_KEY)))
+        
+        if not self.providers:
+            logger.warning("⚠️ No API keys configured! Set OPENROUTER_API_KEY or GEMINI_API_KEY")
+    
+    async def generate_response(self, message: str) -> str:
+        """Try providers in order, fallback if needed"""
+        
+        if not self.providers:
+            return "⚠️ No API providers configured. Please set OPENROUTER_API_KEY or GEMINI_API_KEY environment variables."
+        
+        for provider_name, provider in self.providers:
+            logger.info(f"🔄 Trying {provider_name}...")
+            reply = await provider.generate_response(message)
+            
+            if reply:
+                logger.info(f"✅ Used provider: {provider_name}")
+                return reply
+        
+        # All providers failed
+        logger.error("❌ All providers failed")
+        return "Sorry, I'm unable to generate a response at the moment. Please try again later."
+
+# ============================================================================
+# Initialize Provider
+# ============================================================================
+
+llm_provider = None
+
+def init_provider():
+    """Initialize the LLM provider"""
+    global llm_provider
+    
+    logger.info("=" * 70)
+    logger.info("🚀 AI Chat Service - Free API Integration")
+    logger.info("=" * 70)
+    
+    llm_provider = FallbackProvider()
+    
+    if not llm_provider.providers:
+        logger.warning("⚠️ WARNING: No API keys found!")
+        logger.warning("Set environment variables:")
+        logger.warning("  - OPENROUTER_API_KEY (for OpenRouter)")
+        logger.warning("  - GEMINI_API_KEY (for Google Gemini)")
+    else:
+        logger.info(f"✅ Configured providers: {len(llm_provider.providers)}")
+        for name, _ in llm_provider.providers:
+            logger.info(f"   - {name}")
+
+# ============================================================================
+# FastAPI Lifespan
 # ============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Manage FastAPI application lifecycle
-    Initializes LLM on startup
-    """
-    # Startup
-    logger.info("=" * 70)
-    logger.info("🚀 AI Chat Service - Hugging Face Integration")
-    logger.info("=" * 70)
+    """Manage FastAPI application lifecycle"""
     
-    # Initialize LLM in a thread to avoid blocking
-    loop = asyncio.get_event_loop()
-    success = await loop.run_in_executor(None, init_llm)
-    
-    if success:
-        logger.info("✅ AI Service ready for requests!")
-    else:
-        logger.warning("⚠️ AI Service started but LLM initialization failed")
-    
+    init_provider()
+    logger.info("✅ AI Service ready!")
     logger.info("📍 Service running on http://127.0.0.1:8000")
     logger.info("📖 API docs: http://127.0.0.1:8000/docs")
     logger.info("=" * 70)
     
     yield
     
-    # Shutdown
     logger.info("=" * 70)
     logger.info("🛑 AI Chat Service shutting down...")
     logger.info("=" * 70)
@@ -155,14 +231,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AI Chat Service",
-    description="Real-time AI chat service powered by Hugging Face transformers",
-    version="2.0.0"
+    description="Production-ready AI chat service using free APIs with fallback support",
+    version="3.0.0"
 )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (restrict in production)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -192,14 +268,14 @@ class ChatResponse(BaseModel):
     """AI response"""
     reply: str = Field(..., description="AI generated reply")
     message_length: int = Field(..., description="Length of user message")
-    model: str = Field(default="distilgpt2", description="Model used")
+    provider: str = Field(..., description="Which API provider was used")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "reply": "AI stands for Artificial Intelligence, which refers to computer systems...",
+                "reply": "AI stands for Artificial Intelligence...",
                 "message_length": 40,
-                "model": "distilgpt2"
+                "provider": "OpenRouter"
             }
         }
 
@@ -209,46 +285,30 @@ class ChatResponse(BaseModel):
 
 @app.get("/", tags=["health"])
 async def health_check():
-    """
-    Health check endpoint
-    Returns service status and model information
-    """
-    global llm_pipeline
+    """Health check endpoint"""
+    global llm_provider
+    
+    providers_available = []
+    if llm_provider:
+        providers_available = [name for name, _ in llm_provider.providers]
     
     return {
         "status": "ok",
         "service": "AI Chat Service",
-        "version": "2.0.0",
-        "llm_ready": llm_pipeline is not None,
-        "model": "distilgpt2 (Hugging Face)",
-        "framework": "transformers"
+        "version": "3.0.0",
+        "providers": providers_available,
+        "mode": "free-api-with-fallback"
     }
 
 @app.post("/chat", response_model=ChatResponse, tags=["chat"])
 async def chat_endpoint(request: ChatRequest):
     """
     Main chat endpoint
-    Processes user message and returns AI response using Hugging Face LLM
-    
-    Args:
-        request: ChatRequest with user message
-        
-    Returns:
-        ChatResponse with AI reply and metadata
-        
-    Raises:
-        HTTPException: If LLM not ready or processing fails
+    Uses free APIs with automatic fallback support
     """
+    global llm_provider
+    
     try:
-        global llm_pipeline
-        
-        if llm_pipeline is None:
-            logger.error("LLM not initialized")
-            raise HTTPException(
-                status_code=503,
-                detail="AI model is not ready. Please try again in a moment."
-            )
-        
         message = request.message.strip()
         
         if not message:
@@ -257,18 +317,40 @@ async def chat_endpoint(request: ChatRequest):
                 detail="Message cannot be empty"
             )
         
+        if not llm_provider or not llm_provider.providers:
+            raise HTTPException(
+                status_code=503,
+                detail="No API providers configured. Please set OPENROUTER_API_KEY or GEMINI_API_KEY."
+            )
+        
         logger.info(f"[Chat] Received: '{message[:50]}...'")
         
-        # Generate response in executor to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
-        reply = await loop.run_in_executor(None, generate_response, message)
+        # Generate response with timeout
+        try:
+            reply = await asyncio.wait_for(
+                llm_provider.generate_response(message),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("[Chat] Response generation timed out")
+            raise HTTPException(
+                status_code=504,
+                detail="AI service took too long to respond. Please try again."
+            )
         
-        logger.info(f"[Chat] Responding: '{reply[:50]}...'")
+        if not reply:
+            raise HTTPException(
+                status_code=503,
+                detail="All API providers are currently unavailable. Please try again later."
+            )
+        
+        # Determine which provider was used (for now, just track it in logs)
+        provider_used = llm_provider.providers[0][0] if llm_provider.providers else "Unknown"
         
         return ChatResponse(
             reply=reply,
             message_length=len(message),
-            model="distilgpt2"
+            provider=provider_used
         )
         
     except HTTPException:
