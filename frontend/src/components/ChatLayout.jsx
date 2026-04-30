@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+﻿import { useState, useRef, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import ChatHeader from "./ChatHeader";
 import ChatInput from "./ChatInput";
 import MessageBubble from "./MessageBubble";
-import { Bot, MessageSquarePlus } from "lucide-react";
+import { Bot, ArrowRight } from "lucide-react";
 
 export default function ChatLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -96,7 +96,7 @@ export default function ChatLayout() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 max-w-full">
+      <div className="flex-1 flex flex-col min-w-0 max-w-full relative z-0">
         {/* Header containing title and mobile menu toggle */}
         <ChatHeader 
           title={activeChat.title} 
@@ -112,7 +112,7 @@ export default function ChatLayout() {
               </div>
               <h2 className="text-2xl font-semibold text-slate-100 mb-3 tracking-tight">How can I help you today?</h2>
               <p className="text-slate-400 max-w-sm mb-8 leading-relaxed">
-                I'm a powerful AI assistant ready to help with coding, writing, and problem-solving.
+                I am a powerful AI assistant ready to help with coding, writing, and problem-solving.
               </p>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl w-full px-4 mb-10">
@@ -120,9 +120,10 @@ export default function ChatLayout() {
                   <button 
                     key={i}
                     onClick={() => handleSendMessage(prompt)}
-                    className="text-left px-4 py-3 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-slate-600 rounded-xl text-sm text-slate-300 transition-all duration-200 group shadow-sm hover:shadow-md"
+                    className="flex justify-between items-center text-left px-5 py-4 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-slate-500 rounded-xl text-sm text-slate-300 transition-all duration-200 group shadow-sm hover:shadow-md"
                   >
-                    {prompt} <span className="opacity-0 group-hover:opacity-100 transition-opacity ml-2">→</span >
+                    <span>{prompt}</span> 
+                    <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400" />
                   </button>
                 ))}
               </div>
@@ -141,7 +142,7 @@ export default function ChatLayout() {
                     <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg shadow-sm border bg-gradient-to-br from-blue-600 to-blue-500 text-white border-blue-700">
                       <Bot className="w-5 h-5" />
                     </div>
-                    <div className="flex-1 text-slate-200 items-center flex gap-1">
+                    <div className="flex-1 text-slate-200 items-center flex gap-1 h-8">
                       <div className="w-2 h-2 rounded-full bg-slate-500 animate-bounce [animation-delay:-0.3s]"></div>
                       <div className="w-2 h-2 rounded-full bg-slate-500 animate-bounce [animation-delay:-0.15s]"></div>
                       <div className="w-2 h-2 rounded-full bg-slate-500 animate-bounce"></div>
