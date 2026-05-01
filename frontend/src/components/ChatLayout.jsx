@@ -1,4 +1,4 @@
-﻿import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import ChatHeader from "./ChatHeader";
 import ChatInput from "./ChatInput";
@@ -10,10 +10,10 @@ export default function ChatLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeChatId, setActiveChatId] = useState("1");
   
-  // Use the custom hook for chat management
   const {
     messages,
     isLoading,
+    isStreaming,
     error,
     sendUserMessage,
     clearMessages,
@@ -25,38 +25,52 @@ export default function ChatLayout() {
   ]);
 
   const activeChat = chats.find((c) => c.id === activeChatId) || chats[0];
-  const messagesEndRef = useRef(null);
+  const messagesEndRef  = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const isNearBottomRef = useRef(true); // track whether user is near bottom
 
-  // Auto-scroll to latest message
+  // Detect when user scrolls away from the bottom
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 120; // within 120px = "near bottom"
+  };
+
+  // Auto-scroll only when the user is already near the bottom
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // Handle sending a message
   const handleSendMessage = async (content) => {
+    // Block if currently fetching or streaming
+    if (isLoading || isStreaming) return;
+
     // Update chat title if this is the first message
     if (messages.length === 0) {
       setChats((prev) =>
         prev.map((chat) =>
           chat.id === activeChatId
-            ? { ...chat, title: content.slice(0, 30) + "..." }
+            ? { ...chat, title: content.slice(0, 30) + '...' }
             : chat
         )
       );
     }
 
-    // Send message via the hook (which handles all the API logic)
+    // Always snap to bottom when the user sends a new message
+    isNearBottomRef.current = true;
     await sendUserMessage(content);
 
-    // Update message count in sidebar
     setChats((prev) =>
       prev.map((chat) =>
         chat.id === activeChatId
-          ? { ...chat, messagesCount: messages.length + 2 } // +2 for user + assistant
+          ? { ...chat, messagesCount: messages.length + 2 }
           : chat
       )
     );
@@ -111,7 +125,11 @@ export default function ChatLayout() {
         />
 
         {/* Messages Container */}
-        <div className="flex-1 overflow-y-auto scroll-smooth">
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto scroll-smooth"
+        >
           {messages.length === 0 ? (
             /* Empty State */
             <div className="h-full flex flex-col items-center justify-center text-center px-4 fade-in">
@@ -189,7 +207,10 @@ export default function ChatLayout() {
         </div>
 
         {/* Chat Input */}
-        <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+        <ChatInput
+          onSendMessage={handleSendMessage}
+          isLoading={isLoading || isStreaming}
+        />
       </div>
     </div>
   );

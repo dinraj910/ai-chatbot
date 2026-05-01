@@ -34,3 +34,22 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Blinking cursor for typewriter effect */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* Code block horizontal scroll on small screens */
+pre {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+pre::-webkit-scrollbar {
+  height: 4px;
+}
+pre::-webkit-scrollbar-thumb {
+  background: #3f3f5a;
+  border-radius: 4px;
+}
+

@@ -1,120 +1,133 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { sendMessage as sendMessageAPI } from '../services/api';
 
 /**
  * Custom Hook: useChat
- * Manages chat state and message flow
- * Abstracts API communication from components
+ * Manages chat state, message flow, and a fast chunk-based typewriter effect.
+ *
+ * Streaming strategy:
+ *   - Split the full reply into word-sized tokens
+ *   - Reveal CHUNK_SIZE tokens every INTERVAL_MS
+ *   - This gives ~300-500 chars/sec which feels snappy without looking instant
  */
 
-const useChat = () => {
-  const [messages, setMessages] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+const CHUNK_SIZE   = 4;   // words revealed per tick
+const INTERVAL_MS  = 30;  // ms between ticks
 
-  /**
-   * Add a single message to the chat
-   * @param {string} content - Message content
-   * @param {string} role - 'user' or 'assistant'
-   */
+const useChat = () => {
+  const [messages,    setMessages]    = useState([]);
+  const [isLoading,   setIsLoading]   = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [error,       setError]       = useState(null);
+  const streamTimerRef = useRef(null);
+
+  /** Add a single message to the chat */
   const addMessage = useCallback((content, role) => {
     const newMessage = {
-      id: `${role}-${Date.now()}`,
+      id:        `${role}-${Date.now()}`,
       role,
       content,
       timestamp: new Date().toISOString(),
     };
-
     setMessages((prev) => [...prev, newMessage]);
     return newMessage;
   }, []);
 
-  /**
-   * Update the last message (used for replacing loading state with real response)
-   * @param {string} content - New message content
-   */
+  /** Replace the last message content instantly (used for errors) */
   const updateLastMessage = useCallback((content) => {
     setMessages((prev) => {
       if (prev.length === 0) return prev;
-
       const updated = [...prev];
-      updated[updated.length - 1] = {
-        ...updated[updated.length - 1],
-        content,
-      };
+      updated[updated.length - 1] = { ...updated[updated.length - 1], content };
       return updated;
     });
   }, []);
 
-  /**
-   * Clear all messages (for new chat)
-   */
+  /** Clear all messages (new chat) */
   const clearMessages = useCallback(() => {
+    if (streamTimerRef.current) clearInterval(streamTimerRef.current);
     setMessages([]);
     setError(null);
+    setIsStreaming(false);
   }, []);
 
   /**
-   * Send a user message and handle the response
-   * Flow:
-   * 1. Add user message immediately to UI
-   * 2. Add temporary assistant message (loading)
-   * 3. Call backend API
-   * 4. Replace loading message with real response or error
-   *
-   * @param {string} userInput - The user's message
+   * Chunk-based typewriter: reveal `fullText` in word-groups.
+   * Resolves when complete so the caller can await it.
+   */
+  const streamText = useCallback(
+    (fullText) =>
+      new Promise((resolve) => {
+        if (streamTimerRef.current) clearInterval(streamTimerRef.current);
+
+        // Split preserving whitespace so the reconstructed string is identical
+        const tokens = fullText.split(/(\s+)/);
+        let index = 0;
+        setIsStreaming(true);
+
+        streamTimerRef.current = setInterval(() => {
+          index = Math.min(index + CHUNK_SIZE * 2, tokens.length); // *2 because whitespace tokens
+          const partial   = tokens.slice(0, index).join('');
+          const finished  = index >= tokens.length;
+
+          setMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const updated = [...prev];
+            updated[updated.length - 1] = {
+              ...updated[updated.length - 1],
+              content:   partial,
+              streaming: !finished,
+            };
+            return updated;
+          });
+
+          if (finished) {
+            clearInterval(streamTimerRef.current);
+            setIsStreaming(false);
+            resolve();
+          }
+        }, INTERVAL_MS);
+      }),
+    []
+  );
+
+  /**
+   * Send a user message and stream the response.
+   * While isLoading OR isStreaming the caller should block further input.
    */
   const sendUserMessage = useCallback(
     async (userInput) => {
-      // Validate input
-      if (!userInput || typeof userInput !== 'string') {
-        setError('Invalid message');
-        return;
-      }
-
+      if (!userInput || typeof userInput !== 'string') { setError('Invalid message'); return; }
       const trimmedInput = userInput.trim();
-      if (trimmedInput.length === 0) {
-        setError('Message cannot be empty');
-        return;
-      }
+      if (!trimmedInput) { setError('Message cannot be empty'); return; }
 
-      // Clear previous errors
       setError(null);
 
       try {
-        // Step 1: Add user message immediately (instant UI feedback)
         addMessage(trimmedInput, 'user');
-
-        // Step 2: Add loading placeholder
-        addMessage('...', 'assistant');
-
-        // Step 3: Set loading state
+        addMessage('', 'assistant');   // empty placeholder — loading dots show via isLoading
         setIsLoading(true);
 
-        // Step 4: Call backend API
         const reply = await sendMessageAPI(trimmedInput);
-
-        // Step 5: Replace loading message with real response
-        updateLastMessage(reply);
-
         setIsLoading(false);
+
+        await streamText(reply);
       } catch (err) {
         console.error('[useChat] Error:', err);
-
-        // Replace loading message with error message
-        const errorMessage = err.message || 'Failed to get response. Please try again.';
-        updateLastMessage(`Error: ${errorMessage}`);
-
-        setError(errorMessage);
+        const msg = err.message || 'Failed to get response. Please try again.';
+        updateLastMessage(`⚠️ ${msg}`);
+        setError(msg);
         setIsLoading(false);
+        setIsStreaming(false);
       }
     },
-    [addMessage, updateLastMessage]
+    [addMessage, updateLastMessage, streamText]
   );
 
   return {
     messages,
     isLoading,
+    isStreaming,
     error,
     sendUserMessage,
     addMessage,
