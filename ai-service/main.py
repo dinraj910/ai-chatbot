@@ -43,7 +43,7 @@ FALLBACK_MODE = os.getenv("FALLBACK_MODE", "true").lower() == "true"
 
 # API Endpoints
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # ============================================================================
 # LLM Provider Classes
@@ -58,99 +58,124 @@ class LLMProvider:
 
 class OpenRouterProvider(LLMProvider):
     """OpenRouter API provider (supports multiple models, free tier available)"""
-    
+
+    # Verified free models from https://openrouter.ai/models (updated May 2026)
+    # Listed in order of preference — tries each until one works
+    FREE_MODELS = [
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemma-3-4b-it:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
+        "nousresearch/hermes-3-llama-3.1-405b:free",
+        "liquid/lfm-2.5-1.2b-instruct:free",
+    ]
+
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.url = OPENROUTER_URL
-        self.model = "mistralai/mistral-7b-instruct"  # Free model
-        
+
+    async def _call_model(self, client: httpx.AsyncClient, model: str, message: str) -> Optional[str]:
+        """Call a specific OpenRouter model. Returns None on failure."""
+        response = await client.post(
+            self.url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "HTTP-Referer": "http://localhost:5000",
+                "X-Title": "AI Chat",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": message}],
+                "temperature": 0.7,
+                "max_tokens": 500,
+            },
+        )
+        if response.status_code == 200:
+            data = response.json()
+            reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if reply:
+                logger.info(f"[OpenRouter:{model}] ✅ Response: {reply[:60]}...")
+                return reply
+            return None
+        else:
+            logger.warning(f"[OpenRouter:{model}] Error {response.status_code}: {response.text[:120]}")
+            return None
+
     async def generate_response(self, message: str) -> Optional[str]:
-        """Call OpenRouter API"""
+        """Try each free model in order until one succeeds."""
         if not self.api_key:
             logger.warning("[OpenRouter] No API key provided")
             return None
-        
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.url,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "HTTP-Referer": "http://localhost:5000",
-                        "X-Title": "AI Chat",
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": message
-                            }
-                        ],
-                        "temperature": 0.7,
-                        "max_tokens": 500,
-                    }
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    logger.info(f"[OpenRouter] ✅ Generated response: {reply[:60]}...")
-                    return reply
-                else:
-                    logger.warning(f"[OpenRouter] Error {response.status_code}: {response.text[:100]}")
-                    return None
-                    
+                for model in self.FREE_MODELS:
+                    reply = await self._call_model(client, model, message)
+                    if reply:
+                        return reply
+                    logger.warning(f"[OpenRouter:{model}] failed, trying next model...")
+            return None
         except Exception as e:
             logger.warning(f"[OpenRouter] Failed: {str(e)}")
             return None
 
 class GeminiProvider(LLMProvider):
     """Google Gemini API provider (free tier available)"""
-    
+
+    MODELS = [
+        "gemini-2.0-flash",       # primary
+        "gemini-2.0-flash-lite",  # lighter quota, same API version
+    ]
+
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.url = GEMINI_URL
-        
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    async def _call_model(self, client: httpx.AsyncClient, model: str, message: str) -> Optional[str]:
+        """Call a specific Gemini model, returns None on failure."""
+        url = f"{self.base_url}/{model}:generateContent?key={self.api_key}"
+        for attempt in range(2):  # retry once on 429
+            response = await client.post(
+                url,
+                json={
+                    "contents": {"parts": [{"text": message}]},
+                    "generationConfig": {
+                        "temperature": 0.7,
+                        "maxOutputTokens": 500,
+                    },
+                },
+            )
+            if response.status_code == 200:
+                data = response.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        reply = parts[0].get("text", "")
+                        logger.info(f"[Gemini:{model}] ✅ Response: {reply[:60]}...")
+                        return reply
+                return None
+            elif response.status_code == 429 and attempt == 0:
+                logger.warning(f"[Gemini:{model}] 429 rate-limited, retrying in 3s...")
+                await asyncio.sleep(3)
+            else:
+                logger.warning(f"[Gemini:{model}] Error {response.status_code}: {response.text[:120]}")
+                return None
+        return None
+
     async def generate_response(self, message: str) -> Optional[str]:
-        """Call Gemini API"""
+        """Try each Gemini model in order until one succeeds."""
         if not self.api_key:
             logger.warning("[Gemini] No API key provided")
             return None
-        
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.url}?key={self.api_key}",
-                    json={
-                        "contents": {
-                            "parts": [
-                                {
-                                    "text": message
-                                }
-                            ]
-                        },
-                        "generationConfig": {
-                            "temperature": 0.7,
-                            "maxOutputTokens": 500,
-                        }
-                    }
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        content = candidates[0].get("content", {}).get("parts", [])
-                        if content:
-                            reply = content[0].get("text", "")
-                            logger.info(f"[Gemini] ✅ Generated response: {reply[:60]}...")
-                            return reply
-                    return None
-                else:
-                    logger.warning(f"[Gemini] Error {response.status_code}: {response.text[:100]}")
-                    return None
-                    
+                for model in self.MODELS:
+                    reply = await self._call_model(client, model, message)
+                    if reply:
+                        return reply
+                    logger.warning(f"[Gemini:{model}] failed, trying next model...")
+            return None
         except Exception as e:
             logger.warning(f"[Gemini] Failed: {str(e)}")
             return None
