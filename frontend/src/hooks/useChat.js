@@ -3,18 +3,14 @@ import { sendMessage as sendMessageAPI } from '../services/api';
 
 /**
  * Custom Hook: useChat
- * Manages chat state, message flow, and a fast chunk-based typewriter effect.
- *
- * Streaming strategy:
- *   - Split the full reply into word-sized tokens
- *   - Reveal CHUNK_SIZE tokens every INTERVAL_MS
- *   - This gives ~300-500 chars/sec which feels snappy without looking instant
+ * Manages chat state, message flow, and a chunk-based typewriter effect.
+ * Now accepts a sessionId so the backend can persist messages to Astra DB.
  */
 
-const CHUNK_SIZE   = 4;   // words revealed per tick
-const INTERVAL_MS  = 30;  // ms between ticks
+const CHUNK_SIZE  = 4;   // words revealed per tick
+const INTERVAL_MS = 30;  // ms between ticks
 
-const useChat = () => {
+const useChat = (sessionId = null) => {
   const [messages,    setMessages]    = useState([]);
   const [isLoading,   setIsLoading]   = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -43,7 +39,7 @@ const useChat = () => {
     });
   }, []);
 
-  /** Clear all messages (new chat) */
+  /** Clear all messages (new chat / session switch) */
   const clearMessages = useCallback(() => {
     if (streamTimerRef.current) clearInterval(streamTimerRef.current);
     setMessages([]);
@@ -52,23 +48,42 @@ const useChat = () => {
   }, []);
 
   /**
+   * Hydrate messages from DB history (when switching sessions).
+   * Converts DB message format → UI message format.
+   * @param {Array} dbMessages - Array of message docs from Astra DB
+   */
+  const loadHistory = useCallback((dbMessages) => {
+    if (streamTimerRef.current) clearInterval(streamTimerRef.current);
+    setIsStreaming(false);
+    setError(null);
+
+    const uiMessages = dbMessages.map((msg, index) => ({
+      id:        msg._id || `history-${index}`,
+      role:      msg.role,
+      content:   msg.content,
+      timestamp: msg.created_at || new Date().toISOString(),
+    }));
+
+    setMessages(uiMessages);
+  }, []);
+
+  /**
    * Chunk-based typewriter: reveal `fullText` in word-groups.
-   * Resolves when complete so the caller can await it.
+   * Resolves when the full text has been revealed.
    */
   const streamText = useCallback(
     (fullText) =>
       new Promise((resolve) => {
         if (streamTimerRef.current) clearInterval(streamTimerRef.current);
 
-        // Split preserving whitespace so the reconstructed string is identical
         const tokens = fullText.split(/(\s+)/);
         let index = 0;
         setIsStreaming(true);
 
         streamTimerRef.current = setInterval(() => {
-          index = Math.min(index + CHUNK_SIZE * 2, tokens.length); // *2 because whitespace tokens
-          const partial   = tokens.slice(0, index).join('');
-          const finished  = index >= tokens.length;
+          index = Math.min(index + CHUNK_SIZE * 2, tokens.length);
+          const partial  = tokens.slice(0, index).join('');
+          const finished = index >= tokens.length;
 
           setMessages((prev) => {
             if (prev.length === 0) return prev;
@@ -93,7 +108,7 @@ const useChat = () => {
 
   /**
    * Send a user message and stream the response.
-   * While isLoading OR isStreaming the caller should block further input.
+   * Passes sessionId to the API so the backend saves to DB.
    */
   const sendUserMessage = useCallback(
     async (userInput) => {
@@ -105,10 +120,11 @@ const useChat = () => {
 
       try {
         addMessage(trimmedInput, 'user');
-        addMessage('', 'assistant');   // empty placeholder — loading dots show via isLoading
+        addMessage('', 'assistant'); // placeholder for loading dots
         setIsLoading(true);
 
-        const reply = await sendMessageAPI(trimmedInput);
+        // Pass sessionId → backend saves both messages to Astra DB
+        const reply = await sendMessageAPI(trimmedInput, sessionId);
         setIsLoading(false);
 
         await streamText(reply);
@@ -121,7 +137,7 @@ const useChat = () => {
         setIsStreaming(false);
       }
     },
-    [addMessage, updateLastMessage, streamText]
+    [addMessage, updateLastMessage, streamText, sessionId]
   );
 
   return {
@@ -133,6 +149,7 @@ const useChat = () => {
     addMessage,
     updateLastMessage,
     clearMessages,
+    loadHistory,
   };
 };
 

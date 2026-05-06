@@ -2,31 +2,25 @@ import axios from 'axios';
 
 /**
  * API Service Layer
- * Handles all communication with the backend
- * Centralized configuration for base URL, headers, interceptors, etc.
+ * Handles all communication with the Node.js backend.
+ * Includes both chat and session management endpoints.
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-// Debug: Log the API base URL
 console.log('[API] Base URL configured:', API_BASE_URL);
-console.log('[API] Environment variables:', import.meta.env);
 
-// Create axios instance with default config
+// ─── Axios Instance ────────────────────────────────────────────────────────────
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // 30 seconds
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' },
 });
 
-// Request interceptor for logging
+// Request logging
 apiClient.interceptors.request.use(
   (config) => {
-    const fullUrl = `${config.baseURL}${config.url}`;
-    console.log(`[API Request] ${config.method?.toUpperCase()} ${fullUrl}`);
-    console.log('[API Request Body]', config.data);
+    console.log(`[API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
@@ -35,51 +29,40 @@ apiClient.interceptors.request.use(
   }
 );
 
-// Response interceptor for logging and error handling
+// Response logging + error normalization
 apiClient.interceptors.response.use(
-  (response) => {
-    console.log(`[API Response] ${response.status} ${response.config.url}`);
-    return response;
-  },
+  (response) => response,
   (error) => {
     if (error.response) {
-      // Server responded with error status
-      console.error('[API Response Error]', error.response.status, error.response.data);
+      console.error('[API Error]', error.response.status, error.response.data);
     } else if (error.request) {
-      // Request made but no response
-      console.error('[API Request Error] No response from server', error.request);
+      console.error('[API Error] No response from server');
     } else {
-      // Error in request setup
       console.error('[API Error]', error.message);
     }
     return Promise.reject(error);
   }
 );
 
+// ─── Chat ──────────────────────────────────────────────────────────────────────
+
 /**
- * Send a message to the chat API
- * @param {string} message - The user's message
- * @returns {Promise<string>} - The assistant's reply
- * @throws {Error} - If the request fails
+ * Send a message to the AI and get a reply.
+ * @param {string} message
+ * @param {string|null} sessionId  — DB session to save messages into
+ * @returns {Promise<string>} The assistant's reply text
  */
-const sendMessage = async (message) => {
+const sendMessage = async (message, sessionId = null) => {
   try {
-    const response = await apiClient.post('/chat', {
-      message,
-    });
-
-    // Extract reply from response
+    const response = await apiClient.post('/chat', { message, sessionId });
     const { reply } = response.data;
-
-    if (!reply) {
-      throw new Error('Invalid response format from server');
-    }
-
+    if (!reply) throw new Error('Invalid response format from server');
     return reply;
   } catch (error) {
-    // Re-throw with user-friendly message
     if (error.response?.status === 400) {
       throw new Error(error.response.data.error || 'Invalid message format');
+    } else if (error.response?.status === 503) {
+      throw new Error('AI service is unavailable. Please make sure it is running.');
     } else if (error.response?.status === 500) {
       throw new Error(error.response.data.error || 'Server error. Please try again.');
     } else if (error.request && !error.response) {
@@ -90,4 +73,74 @@ const sendMessage = async (message) => {
   }
 };
 
-export { apiClient, sendMessage };
+// ─── Sessions ─────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch all chat sessions (for sidebar).
+ * @returns {Promise<Array>}
+ */
+const getSessions = async () => {
+  try {
+    const response = await apiClient.get('/sessions');
+    return response.data.sessions || [];
+  } catch (error) {
+    console.error('[API] getSessions failed:', error.message);
+    return []; // graceful fallback
+  }
+};
+
+/**
+ * Create a new chat session in the DB.
+ * @param {string} title
+ * @returns {Promise<Object>} The new session document
+ */
+const createSession = async (title = 'New Chat') => {
+  const response = await apiClient.post('/sessions', { title });
+  return response.data.session;
+};
+
+/**
+ * Load all messages for a specific session.
+ * @param {string} sessionId
+ * @returns {Promise<Array>}
+ */
+const getSessionMessages = async (sessionId) => {
+  try {
+    const response = await apiClient.get(`/sessions/${sessionId}/messages`);
+    return response.data.messages || [];
+  } catch (error) {
+    console.error('[API] getSessionMessages failed:', error.message);
+    return [];
+  }
+};
+
+/**
+ * Rename a session.
+ * @param {string} sessionId
+ * @param {string} title
+ */
+const renameSession = async (sessionId, title) => {
+  try {
+    await apiClient.patch(`/sessions/${sessionId}`, { title });
+  } catch (error) {
+    console.error('[API] renameSession failed:', error.message);
+  }
+};
+
+/**
+ * Delete a session and all its messages.
+ * @param {string} sessionId
+ */
+const deleteSession = async (sessionId) => {
+  await apiClient.delete(`/sessions/${sessionId}`);
+};
+
+export {
+  apiClient,
+  sendMessage,
+  getSessions,
+  createSession,
+  getSessionMessages,
+  renameSession,
+  deleteSession,
+};
